@@ -81,7 +81,7 @@
       }
       .coin-grid {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: 1fr;
         gap: 10px;
         margin-bottom: 15px;
       }
@@ -89,20 +89,49 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
+        gap: 8px;
       }
       .coin-row label {
-        flex: 1;
+        flex: 0 0 150px;
       }
       .coin-row input {
-        flex: 2;
+        flex: 1;
         padding: 5px 10px;
         border: 1px solid #ccc;
         border-radius: 4px;
         font-size: 1rem;
       }
-      .actions {
+      .change-box {
         display: flex;
-        flex-wrap: wrap;
+        align-items: center;
+        gap: 5px;
+        flex: 0 0 auto;
+        min-width: 0;
+      }
+      .change-box input {
+        width: 170px;
+        flex: 0 0 170px;
+        min-width: 0;
+      }
+      .change-box select {
+        width: 70px;
+        flex: 0 0 70px;
+        padding: 5px 4px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #fff;
+      }
+      .save-status {
+        min-height: 20px;
+        margin-top: 8px;
+        text-align: center;
+        font-size: 0.9rem;
+        color: #2e7d32;
+        font-weight: bold;
+      }
+      .actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(90px, 130px));
         justify-content: center;
         gap: 8px;
         margin-top: 10px;
@@ -169,8 +198,33 @@
         .coin-grid {
           grid-template-columns: 1fr;
         }
-        .actions {
+        .coin-row {
           flex-direction: column;
+          align-items: stretch;
+        }
+        .coin-row label {
+          flex: unset;
+        }
+        .change-box {
+          min-width: 0;
+          width: 100%;
+        }
+        .change-box input {
+          min-width: 0;
+        }
+        .change-box {
+          width: 100%;
+        }
+        .change-box input {
+          width: 100%;
+          flex: 1 1 auto;
+        }
+        .change-box select {
+          width: 70px;
+          flex: 0 0 70px;
+        }
+        .actions {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 6px;
         }
         .actions button {
@@ -253,10 +307,13 @@
         </div>
       </div>
       <!-- Action buttons -->
-      <div class="actions">
+      <div class="actions actions-2x2">
+        <button type="button" id="saveBtn" class="btn-secondary">저장</button>
+        <button type="button" id="applyAllBtn" class="btn-secondary">적용</button>
+        <button type="button" id="loadBtn" class="btn-secondary">불러오기</button>
         <button type="button" id="resetBtn" class="btn-secondary">초기화</button>
-        <button type="button" id="copyLinkBtn" class="btn-secondary">현재 링크 복사</button>
       </div>
+      <div id="saveStatus" class="save-status" aria-live="polite"></div>
     </form>
     <!-- Results section -->
     <div class="results-section">
@@ -475,6 +532,113 @@
         SHIB: '시바이누',
       };
 
+      const inputIds = ['btc','eth','xrp','xlm','ada','trx','etc','bch','bnb','shib'];
+
+      function showSaveStatus(message = '저장됨') {
+        const el = document.getElementById('saveStatus');
+        if (!el) return;
+        el.textContent = message;
+        if (window._saveStatusTimer) clearTimeout(window._saveStatusTimer);
+        window._saveStatusTimer = setTimeout(() => {
+          el.textContent = '';
+        }, 2400);
+      }
+
+      function normalizeNumberValue(value) {
+        const num = parseFloat(value);
+        if (!Number.isFinite(num)) return 0;
+        return num;
+      }
+
+      function writeNumberInput(id, value) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const rounded = Math.round((value + Number.EPSILON) * 100000000) / 100000000;
+        el.value = String(rounded);
+      }
+
+      function buildChangeControls() {
+        inputIds.forEach((id) => {
+          const currentInput = document.getElementById(id);
+          if (!currentInput || currentInput.dataset.changeReady === '1') return;
+          currentInput.dataset.changeReady = '1';
+
+          const box = document.createElement('div');
+          box.className = 'change-box';
+          box.innerHTML = `
+            <input type="number" id="change_${id}" step="any" min="0" value="0" aria-label="${id.toUpperCase()} 변경 수량" />
+            <select id="op_${id}" aria-label="${id.toUpperCase()} 추가 또는 차감 선택">
+              <option value="add">추가</option>
+              <option value="sub">차감</option>
+            </select>
+          `;
+          currentInput.parentElement.appendChild(box);
+        });
+      }
+
+      function applyQuantityChange(id) {
+        const currentEl = document.getElementById(id);
+        const changeEl = document.getElementById(`change_${id}`);
+        const opEl = document.getElementById(`op_${id}`);
+        if (!currentEl || !changeEl || !opEl) return;
+
+        const current = normalizeNumberValue(currentEl.value);
+        const change = normalizeNumberValue(changeEl.value);
+        if (change <= 0) {
+          showSaveStatus('변경 수량을 입력해 주세요');
+          return;
+        }
+
+        let next = current;
+        if (opEl.value === 'sub') {
+          if (change > current) {
+            alert('보유 수량보다 많이 차감할 수 없습니다.');
+            return;
+          }
+          next = current - change;
+        } else {
+          next = current + change;
+        }
+
+        writeNumberInput(id, next);
+        changeEl.value = '0';
+        updateCurrentTable();
+        showSaveStatus('적용됨 · 저장하려면 저장 버튼을 누르세요');
+      }
+
+      function applyAllQuantityChanges() {
+        let changed = false;
+
+        for (const id of inputIds) {
+          const currentEl = document.getElementById(id);
+          const changeEl = document.getElementById(`change_${id}`);
+          const opEl = document.getElementById(`op_${id}`);
+          if (!currentEl || !changeEl || !opEl) continue;
+
+          const current = normalizeNumberValue(currentEl.value);
+          const change = normalizeNumberValue(changeEl.value);
+          if (change <= 0) continue;
+
+          if (opEl.value === 'sub' && change > current) {
+            alert(`${currentEl.closest('.coin-row')?.querySelector('label')?.textContent || id.toUpperCase()} 보유 수량보다 많이 차감할 수 없습니다.`);
+            return;
+          }
+
+          const next = opEl.value === 'sub' ? current - change : current + change;
+          writeNumberInput(id, next);
+          changeEl.value = '0';
+          changed = true;
+        }
+
+        if (!changed) {
+          showSaveStatus('변경 수량을 입력해 주세요');
+          return;
+        }
+
+        updateCurrentTable();
+        showSaveStatus('적용됨 · 저장하려면 저장 버튼을 누르세요');
+      }
+
       /**
        * Populates the historical comparison table based on the selected currency.
        */
@@ -682,20 +846,40 @@
         updateCurrentTable();
         saveInputsToStorage();
       });
+      document.getElementById('saveBtn').addEventListener('click', () => {
+        saveInputsToStorage();
+        showSaveStatus('저장됨');
+      });
+
+      document.getElementById('loadBtn').addEventListener('click', () => {
+        const loaded = loadInputsFromStorage();
+        if (loaded) {
+          updateHistoricalTables();
+          updateCurrentTable();
+          showSaveStatus('불러오기 완료');
+        } else {
+          showSaveStatus('저장된 값이 없습니다');
+        }
+      });
+
       document.getElementById('resetBtn').addEventListener('click', () => {
-        ['btc','eth','xrp','xlm','ada','trx','etc','bch','bnb','shib'].forEach((id) => {
+        if (!confirm('화면의 전체 보유 수량을 초기화할까요? 저장된 값은 지워지지 않습니다.')) return;
+        inputIds.forEach((id) => {
           document.getElementById(id).value = '';
+          const changeEl = document.getElementById(`change_${id}`);
+          if (changeEl) changeEl.value = '0';
         });
         updateCurrentTable();
-        clearStorage();
+        showSaveStatus('초기화됨 · 저장값은 유지됨');
       });
-      document.getElementById('copyLinkBtn').addEventListener('click', copyCurrentLink);
 
-      // Whenever any input changes, update the current values using cached prices
-      ['btc','eth','xrp','xlm','ada','trx','etc','bch','bnb','shib'].forEach((id) => {
+      document.getElementById('applyAllBtn').addEventListener('click', applyAllQuantityChanges);
+
+      // Whenever any input changes, update the current values immediately.
+      // Values are stored only when the user presses the 저장 button.
+      inputIds.forEach((id) => {
         document.getElementById(id).addEventListener('input', () => {
           updateCurrentTable();
-          saveInputsToStorage();
         });
       });
 
@@ -708,6 +892,7 @@
           // fallback to file
           logoEl.src = 'logo.png';
         }
+        buildChangeControls();
         initializeFromQuery();
         // If no query params, restore previous inputs from localStorage
         if (!window.location.search || window.location.search === '?') {
@@ -715,8 +900,6 @@
         }
         updateHistoricalTables();
         startAutoRefresh();
-        // Persist whatever initial state we ended up with
-        saveInputsToStorage();
       });
     </script>
   </body>
